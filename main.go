@@ -147,22 +147,28 @@ func handleJoinRequests(incomingChannel chan *Message, informCompletedChannel ch
 			} else {
 				// Send request message
 				requestId := stateManager.GetNextRequestId()
+				newRequestMessage := &MembershipMessage{
+					OperationType: ADD,
+					RequestId:     requestId,
+					ViewId:        currentState.ViewId,
+					PeerId:        int(msg.Header.SenderID),
+				}
+				errors := 0
 				for _, peerId := range stateManager.GetMembers() {
 					if peer, ok := peerManager.GetPeer(peerId); ok && peerId != peerManager.GetSelfID() {
-						newRequestMessage := &MembershipMessage{
-							OperationType: ADD,
-							RequestId:     requestId,
-							ViewId:        currentState.ViewId,
-							PeerId:        int(msg.Header.SenderID),
-						}
 						err := SendReq(peer.Conn, peerManager.GetSelfID(), newRequestMessage)
 						if err != nil {
+							errors += 1
 							println("Cound not send REQ Message to peer: %v", peerId)
-						} else {
-							stateManager.AddRequestEntry(requestId, newRequestMessage)
 						}
 					}
 				}
+				if errors == 0 {
+					stateManager.AddRequestEntry(requestId, newRequestMessage)
+				} else {
+					println("Could not send REQ message to all the peers")
+				}
+
 			}
 			informCompletedChannel <- true
 		}
@@ -203,7 +209,7 @@ func handleREQMessages(incomingChannel chan *Message, informCompletedChannel cha
 				println("Error decoding Membership Message")
 			}
 			stateManager.AddRequestEntry(memberShipMessage.RequestId, memberShipMessage)
-			// stateManager.SetRequestId(memberShipMessage.RequestId)
+			stateManager.SetRequestId(memberShipMessage.RequestId)
 			// Send back OK message
 			if leader, ok := peerManager.GetPeer(int(msg.Header.SenderID)); ok {
 				SendOk(leader.Conn, peerManager.GetSelfID(), &MembershipMessage{
@@ -341,21 +347,26 @@ func handleCheckingFailures(stateManager *StateManager, peerManager *PeerManager
 							} else {
 								// Send DELETE request message to all the other peers
 								requestId := stateManager.GetNextRequestId()
+								newRequestMessage := &MembershipMessage{
+									OperationType: DELETE,
+									RequestId:     requestId,
+									ViewId:        currentState.ViewId,
+									PeerId:        peerId,
+								}
+								errors := 0
 								for _, memberId := range allMembers {
 									if peer, ok := peerManager.GetPeer(memberId); ok && memberId != self && memberId != peerId {
-										newRequestMessage := &MembershipMessage{
-											OperationType: DELETE,
-											RequestId:     requestId,
-											ViewId:        currentState.ViewId,
-											PeerId:        peerId,
-										}
 										err := SendReq(peer.Conn, peerManager.GetSelfID(), newRequestMessage)
 										if err != nil {
+											errors += 1
 											println("Cound not send REQ Message to peer: %v", peerId)
-										} else {
-											stateManager.AddRequestEntry(requestId, newRequestMessage)
 										}
 									}
+								}
+								if errors == 0 {
+									stateManager.AddRequestEntry(requestId, newRequestMessage)
+								} else {
+									println("Could not send REQ message to all the peers")
 								}
 							}
 						}
