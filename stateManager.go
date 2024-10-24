@@ -9,11 +9,10 @@ import (
 type OperationType string
 
 const (
-	ADD          OperationType = "ADD"
-	DELETE       OperationType = "DELETE"
-	PENDING      OperationType = "PENDING"
-	NOTHING      OperationType = "NOTHING"
-	MaxRequestId               = 1e6
+	ADD     OperationType = "ADD"
+	DELETE  OperationType = "DELETE"
+	PENDING OperationType = "PENDING"
+	NOTHING OperationType = "NOTHING"
 )
 
 type State struct {
@@ -34,23 +33,25 @@ type RequestEntry struct {
 }
 
 type StateManager struct {
-	currentState       State
-	peerManager        *PeerManager
-	requestEntries     map[int]*RequestEntry
-	numberOfOkReceived map[int]int
-	peerStatus         map[int]int
-	nextRequestId      int
-	mu                 sync.RWMutex
+	currentState                State
+	peerManager                 *PeerManager
+	requestEntries              map[int]*RequestEntry
+	numberOfOkReceived          map[int]int
+	numberOfNewLeaderOkReceived map[int]int
+	peerStatus                  map[int]int
+	nextRequestId               int
+	mu                          sync.RWMutex
 }
 
 func NewStateManager(peerManager *PeerManager) *StateManager {
 	return &StateManager{
-		currentState:       State{ViewId: 1},
-		peerManager:        peerManager,
-		requestEntries:     make(map[int]*RequestEntry),
-		numberOfOkReceived: make(map[int]int),
-		peerStatus:         make(map[int]int),
-		nextRequestId:      1,
+		currentState:                State{ViewId: 1},
+		peerManager:                 peerManager,
+		requestEntries:              make(map[int]*RequestEntry),
+		numberOfOkReceived:          make(map[int]int),
+		numberOfNewLeaderOkReceived: make(map[int]int),
+		peerStatus:                  make(map[int]int),
+		nextRequestId:               1,
 	}
 }
 
@@ -85,6 +86,13 @@ func (sm *StateManager) UpdateOkEntries(requestId int) int {
 	defer sm.mu.Unlock()
 	sm.numberOfOkReceived[requestId] = sm.numberOfOkReceived[requestId] + 1
 	return sm.numberOfOkReceived[requestId]
+}
+
+func (sm *StateManager) UpdateNewLeaderOkEntries(requestId int) int {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.numberOfNewLeaderOkReceived[requestId] = sm.numberOfNewLeaderOkReceived[requestId] + 1
+	return sm.numberOfNewLeaderOkReceived[requestId]
 }
 
 func (sm *StateManager) IncrementViewId() {
@@ -141,14 +149,15 @@ func (sm *StateManager) GetNextRequestId() int {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	requestId := sm.nextRequestId
+	nameHash := sm.peerManager.GetSelfHash()
+	uniqueId := nameHash + sm.nextRequestId
 	sm.nextRequestId = sm.nextRequestId + 1
 
 	if sm.nextRequestId >= MaxRequestId {
-		sm.nextRequestId = 0
+		sm.nextRequestId = 1
 	}
 
-	return requestId
+	return uniqueId
 }
 
 func (sm *StateManager) SetRequestId(requestId int) {

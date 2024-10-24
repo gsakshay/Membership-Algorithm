@@ -19,3 +19,17 @@ func arrayToString(arr []int) string {
 	sb.WriteString("]")
 	return sb.String()
 }
+
+func nextLeader(n int, arr []int) (int, bool) {
+	if len(arr) == 0 {
+		return 0, false
+	}
+
+	for _, value := range arr {
+		if value > n {
+			return value, true
+		}
+	}
+
+	return 0, false
+}

@@ -6,6 +6,10 @@ import (
 	"sync"
 )
 
+const (
+	MaxRequestId = 1e6
+)
+
 type Peer struct {
 	ID              int
 	Hostname        string
@@ -15,18 +19,20 @@ type Peer struct {
 }
 
 type PeerManager struct {
-	peers     map[int]Peer
-	peerMap   map[int]string
-	peerCount int
-	selfID    int
-	leaderId  int
-	mu        sync.RWMutex
+	peers      map[int]Peer
+	peerMap    map[int]string
+	peerCount  int
+	selfID     int
+	selfHashed int
+	leaderId   int
+	mu         sync.RWMutex
 }
 
 func NewPeerManager() *PeerManager {
 	return &PeerManager{
-		peers:   make(map[int]Peer),
-		peerMap: make(map[int]string),
+		peers:      make(map[int]Peer),
+		peerMap:    make(map[int]string),
+		selfHashed: 1,
 	}
 }
 
@@ -62,44 +68,6 @@ func (pm *PeerManager) AddPeer(id int) int {
 	return id
 }
 
-func (pm *PeerManager) DeletePeer(id int) error {
-	pm.mu.Lock()
-	defer pm.mu.Unlock()
-
-	if _, exists := pm.peers[id]; !exists {
-		return fmt.Errorf("peer with ID %d not found", id)
-	}
-
-	delete(pm.peers, id)
-	pm.peerCount--
-
-	if id == pm.leaderId {
-		pm.relectLeader()
-	}
-
-	return nil
-}
-
-func (pm *PeerManager) relectLeader() {
-	pm.leaderId = 0
-
-	if pm.peerCount == 0 {
-		pm.leaderId = pm.selfID
-		return
-	}
-
-	for i := pm.leaderId + 1; i < 10; i++ { // TODO - Write this better
-		if _, exists := pm.peers[i]; exists {
-			pm.leaderId = i
-			return
-		}
-	}
-
-	if pm.leaderId == 0 {
-		fmt.Println("Leader could not be elected")
-	}
-}
-
 func (pm *PeerManager) GetPeers() []Peer {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
@@ -126,15 +94,30 @@ func (pm *PeerManager) GetPeer(id int) (Peer, bool) {
 }
 
 func (pm *PeerManager) SetSelf(selfID int) {
-	pm.mu.Lock()
 	defer pm.mu.Unlock()
 	pm.selfID = selfID
+
+	hash := 0
+	if name, ok := pm.GetPeerName(selfID); ok {
+		pm.mu.Lock()
+
+		for _, char := range name {
+			hash = (hash*31 + int(char)) % MaxRequestId
+		}
+	}
+	pm.selfHashed = hash
 }
 
 func (pm *PeerManager) GetSelfID() int {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
 	return pm.selfID
+}
+
+func (pm *PeerManager) GetSelfHash() int {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	return pm.selfHashed
 }
 
 func (pm *PeerManager) GetSelf() (Peer, bool) {
