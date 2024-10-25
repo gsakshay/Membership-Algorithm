@@ -327,26 +327,21 @@ func decodePeer(payload []byte, offset int, peer *Peer) (int, error) {
 }
 
 func SendJoin(conn net.Conn, senderID int, membMsg *MembershipMessage) error {
-	println("Sending JOIN from ", senderID)
 	return SendMessage(conn, senderID, JOIN, membMsg)
 }
 
 func SendReq(conn net.Conn, senderID int, membMsg *MembershipMessage) error {
-	println("Sending REQ from ", senderID, " with req ID ", membMsg.RequestId)
 	return SendMessage(conn, senderID, REQ, membMsg)
 }
 
 func SendOk(conn net.Conn, senderID int, membMsg *MembershipMessage) error {
-	println("Sending OK from ", senderID, " with req ID ", membMsg.RequestId)
 	return SendMessage(conn, senderID, OK, membMsg)
 }
 
 func SendNewView(conn net.Conn, senderID int, membMsg *MembershipMessage) error {
-	println("Sending NEWVIEW from ", senderID, " with view ", membMsg.ViewId)
 	return SendMessage(conn, senderID, NEWVIEW, membMsg)
 }
 
 func SendNewLeader(conn net.Conn, senderID int, membMsg *MembershipMessage) error {
-	println("Sending NEWLEADER from ", senderID)
 	return SendMessage(conn, senderID, NEWLEADER, membMsg)
 }

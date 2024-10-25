@@ -33,7 +33,7 @@ func parseFlagsAndAssignConstants() {
 
 	config.TCPPort = "8888"
 	config.UDPPort = "9999"
-	config.HeartbeatTimeout = 1 * time.Second
+	config.HeartbeatTimeout = time.Duration(0.5 * float64(time.Second))
 
 	hostname, err := os.Hostname()
 	if err != nil {
@@ -111,7 +111,7 @@ func establishConnections(peerManager *PeerManager, connectionsToBeEstablishedCh
 				conn, err := net.Dial("tcp", peer.Address)
 				connErr := peerManager.SetConnection(peer.ID, conn)
 				if err != nil || connErr != nil {
-					println("Failed to establish connection")
+					fmt.Println("Failed to establish connection with ", peer.ID)
 				} else {
 					connectionEstablishedCh <- true
 				}
@@ -141,7 +141,7 @@ func handleJoinRequests(incomingChannel chan *Message, informCompletedChannel ch
 						OperationType:  ADD,
 					})
 				}
-				println("{peer_id: ", peerManager.GetSelfID(), ", view_id: ", stateManager.GetViewId(), ", leader: ", peerManager.GetLeader(), ", memb_list: ", arrayToString(stateManager.GetMembers()), "}")
+				fmt.Println("{peer_id: ", peerManager.GetSelfID(), ", view_id: ", stateManager.GetViewId(), ", leader: ", peerManager.GetLeader(), ", memb_list: ", arrayToString(stateManager.GetMembers()), "}")
 			} else {
 				// Send request message
 				requestId := stateManager.GetNextRequestId()
@@ -157,14 +157,14 @@ func handleJoinRequests(incomingChannel chan *Message, informCompletedChannel ch
 						err := SendReq(peer.Conn, peerManager.GetSelfID(), newRequestMessage)
 						if err != nil {
 							errors += 1
-							println("Cound not send REQ Message to peer: %v", peerId)
+							fmt.Printf("Could not send REQ Message to peer: %v\n", peerId)
 						}
 					}
 				}
 				if errors == 0 {
 					stateManager.AddRequestEntry(requestId, newRequestMessage)
 				} else {
-					println("Could not send REQ message to all the peers")
+					fmt.Println("Could not send REQ message to all the peers")
 				}
 
 			}
@@ -178,15 +178,15 @@ func handleNEWVIEWMessage(incomingChannel chan *Message, informCompletedChannel 
 		select {
 		case msg := <-incomingChannel:
 			memberShipMessage, err := decodeMembershipMessage(msg.Payload)
-			println("NEWVIEW Message details", memberShipMessage.ViewId, memberShipMessage.OperationType, memberShipMessage.PeerId, memberShipMessage.MembershipList)
+			// fmt.Println("NEWVIEW Message details", memberShipMessage.ViewId, memberShipMessage.OperationType, memberShipMessage.PeerId, memberShipMessage.MembershipList)
 			if err != nil {
-				println("Error decoding Membership Message")
+				fmt.Println("Error decoding Membership Message")
 			}
 			updateErr := stateManager.UpdateView(memberShipMessage)
 			if updateErr != nil {
-				println("Error updating the membership")
+				fmt.Println("Error updating the membership")
 			} else {
-				println("{peer_id: ", peerManager.GetSelfID(), ", view_id: ", stateManager.GetViewId(), ", leader: ", peerManager.GetLeader(), ", memb_list: ", arrayToString(stateManager.GetMembers()), "}")
+				fmt.Fprintf(os.Stderr, "{peer_id: %d, view_id: %d, leader: %d, memb_list: %s}\n", peerManager.GetSelfID(), stateManager.GetViewId(), peerManager.GetLeader(), arrayToString(stateManager.GetMembers()))
 				informCompletedChannel <- true
 				if memberShipMessage.RequestId != 0 {
 					stateManager.DeleteRequestEntry(memberShipMessage.RequestId)
@@ -204,10 +204,9 @@ func handleREQMessages(incomingChannel chan *Message, informCompletedChannel cha
 			// Save the operation
 			memberShipMessage, err := decodeMembershipMessage(msg.Payload)
 			if err != nil {
-				println("Error decoding Membership Message")
+				fmt.Println("Error decoding Membership Message")
 			}
 			stateManager.AddRequestEntry(memberShipMessage.RequestId, memberShipMessage)
-			stateManager.SetRequestId(memberShipMessage.RequestId)
 			// Send back OK message
 			if leader, ok := peerManager.GetPeer(int(msg.Header.SenderID)); ok {
 				SendOk(leader.Conn, peerManager.GetSelfID(), &MembershipMessage{
@@ -226,72 +225,74 @@ func handleOKMessages(incomingChannel chan *Message, informCompletedChannel chan
 		case msg := <-incomingChannel:
 			memberShipMessage, err := decodeMembershipMessage(msg.Payload)
 			if err != nil {
-				println("Error decoding Membership Message")
+				fmt.Println("Error decoding Membership Message")
 			}
-			if stateManager.GetCurrentState().ViewId != memberShipMessage.ViewId {
-				println("Peer: ", msg.Header.SenderID, " is lagging behind with viewID: ", memberShipMessage.ViewId, " whereas my viewID is ", stateManager.GetCurrentState().ViewId)
-				return
-			}
-			currentOks := stateManager.UpdateOkEntries(memberShipMessage.RequestId)
-			if retrievedRequest, ok := stateManager.GetRequestEntry(memberShipMessage.RequestId); ok {
-				if retrievedRequest.Message.OperationType == ADD && currentOks == len(stateManager.GetCurrentState().MemberList)-1 {
-					// Increment viewId and Membership
-					stateManager.UpdateView(&MembershipMessage{
-						ViewId:         retrievedRequest.Message.ViewId + 1,
-						OperationType:  retrievedRequest.Message.OperationType,
-						PeerId:         retrievedRequest.Message.PeerId,
-						MembershipList: retrievedRequest.Message.MembershipList,
-					})
-					// Send back the NEWVIEW message to all the peers
-					members := stateManager.GetMembers()
-					for _, peerId := range members {
-						if peer, ok := peerManager.GetPeer(peerId); ok && peerId != peerManager.GetSelfID() {
-							SendNewView(peer.Conn, peerManager.GetSelfID(), &MembershipMessage{
-								ViewId:         stateManager.GetViewId(),
-								MembershipList: stateManager.GetMembers(),
-								RequestId:      retrievedRequest.Message.RequestId,
-								OperationType:  retrievedRequest.Message.OperationType,
-							})
+			if stateManager.GetViewId() == memberShipMessage.ViewId {
+				currentOks := stateManager.UpdateOkEntries(memberShipMessage.RequestId)
+				if retrievedRequest, ok := stateManager.GetRequestEntry(memberShipMessage.RequestId); ok {
+					if retrievedRequest.Message.OperationType == ADD && currentOks == len(stateManager.GetCurrentState().MemberList)-1 {
+						// Increment viewId and Membership
+						stateManager.UpdateView(&MembershipMessage{
+							ViewId:         stateManager.GetViewId() + 1,
+							OperationType:  retrievedRequest.Message.OperationType,
+							PeerId:         retrievedRequest.Message.PeerId,
+							MembershipList: retrievedRequest.Message.MembershipList,
+						})
+						// Send back the NEWVIEW message to all the peers
+						members := stateManager.GetMembers()
+						for _, peerId := range members {
+							if peer, ok := peerManager.GetPeer(peerId); ok && peerId != peerManager.GetSelfID() {
+								SendNewView(peer.Conn, peerManager.GetSelfID(), &MembershipMessage{
+									ViewId:         stateManager.GetViewId(),
+									MembershipList: stateManager.GetMembers(),
+									RequestId:      retrievedRequest.Message.RequestId,
+									OperationType:  retrievedRequest.Message.OperationType,
+								})
+							}
 						}
-					}
-					println("{peer_id: ", peerManager.GetSelfID(), ", view_id: ", stateManager.GetViewId(), ", leader: ", peerManager.GetLeader(), ", memb_list: ", arrayToString(stateManager.GetMembers()), "}")
-					stateManager.DeleteRequestEntry(memberShipMessage.RequestId)
-					informCompletedChannel <- true
+						fmt.Fprintf(os.Stderr, "{peer_id: %v, view_id: %v, leader: %v, memb_list: %v}\n",
+							peerManager.GetSelfID(), stateManager.GetViewId(), peerManager.GetLeader(), arrayToString(stateManager.GetMembers()))
+						stateManager.DeleteRequestEntry(memberShipMessage.RequestId)
+						informCompletedChannel <- true
 
-					// Check for special case of custom test case
-					if len(members)-1 == peerManager.GetPeerCount() && config.CustomTestcase {
-						// Meaning all peers have joined
-						readyToExecuteCustomTestCaseCh <- true
-					}
-
-				} else if retrievedRequest.Message.OperationType == DELETE && currentOks == len(stateManager.GetCurrentState().MemberList)-2 {
-					// Increment viewId and update Membership
-					stateManager.UpdateView(&MembershipMessage{
-						ViewId:         retrievedRequest.Message.ViewId + 1,
-						OperationType:  retrievedRequest.Message.OperationType,
-						PeerId:         retrievedRequest.Message.PeerId,
-						MembershipList: retrievedRequest.Message.MembershipList,
-					})
-					// Send back the NEWVIEW message to all the peers
-					for _, peerId := range stateManager.GetMembers() {
-						if peer, ok := peerManager.GetPeer(peerId); ok && peerId != peerManager.GetSelfID() && peerId != retrievedRequest.Message.PeerId {
-							SendNewView(peer.Conn, peerManager.GetSelfID(), &MembershipMessage{
-								ViewId:        stateManager.GetViewId(),
-								PeerId:        retrievedRequest.Message.PeerId,
-								RequestId:     retrievedRequest.Message.RequestId,
-								OperationType: retrievedRequest.Message.OperationType,
-							})
+						// Check for special case of custom test case
+						if len(members)-1 == peerManager.GetPeerCount() && config.CustomTestcase {
+							// Meaning all peers have joined
+							readyToExecuteCustomTestCaseCh <- true
 						}
+
+					} else if retrievedRequest.Message.OperationType == DELETE && currentOks == len(stateManager.GetCurrentState().MemberList)-2 {
+						// Increment viewId and update Membership
+						stateManager.UpdateView(&MembershipMessage{
+							ViewId:         stateManager.GetViewId() + 1,
+							OperationType:  retrievedRequest.Message.OperationType,
+							PeerId:         retrievedRequest.Message.PeerId,
+							MembershipList: retrievedRequest.Message.MembershipList,
+						})
+						// Send back the NEWVIEW message to all the peers
+						for _, peerId := range stateManager.GetMembers() {
+							if peer, ok := peerManager.GetPeer(peerId); ok && peerId != peerManager.GetSelfID() && peerId != retrievedRequest.Message.PeerId {
+								SendNewView(peer.Conn, peerManager.GetSelfID(), &MembershipMessage{
+									ViewId:        stateManager.GetViewId(),
+									PeerId:        retrievedRequest.Message.PeerId,
+									RequestId:     retrievedRequest.Message.RequestId,
+									OperationType: retrievedRequest.Message.OperationType,
+								})
+							}
+						}
+						fmt.Fprintf(os.Stderr, "{peer_id: %v, view_id: %v, leader: %v, memb_list: %v}\n",
+							peerManager.GetSelfID(), stateManager.GetViewId(), peerManager.GetLeader(), arrayToString(stateManager.GetMembers()))
+						stateManager.DeleteRequestEntry(memberShipMessage.RequestId)
+						informCompletedChannel <- true
+					} else {
+						// fmt.Println("OK MISMATCH", currentOks, len(stateManager.GetCurrentState().MemberList)-1, " with req ", memberShipMessage.RequestId)
+						informCompletedChannel <- true
 					}
-					println("{peer_id: ", peerManager.GetSelfID(), ", view_id: ", stateManager.GetViewId(), ", leader: ", peerManager.GetLeader(), ", memb_list: ", arrayToString(stateManager.GetMembers()), "}")
-					stateManager.DeleteRequestEntry(memberShipMessage.RequestId)
-					informCompletedChannel <- true
-				} else {
-					println("OK MISMATCH", currentOks, len(stateManager.GetCurrentState().MemberList)-1, " with req ", memberShipMessage.RequestId)
-					informCompletedChannel <- true
 				}
+			} else {
+				fmt.Println("Peer: ", msg.Header.SenderID, " is lagging behind with viewID: ", memberShipMessage.ViewId, " whereas my viewID is ", stateManager.GetCurrentState().ViewId)
+				informCompletedChannel <- true
 			}
-
 		}
 	}
 }
@@ -300,15 +301,13 @@ func handleSendingHeartbeats(peer Peer, peerManager *PeerManager) {
 	for {
 		select {
 		case action := <-peer.SendHeartbeatCh:
-			if action {
-				err := SendHeartbeat(peerManager.GetSelfID(), peer)
-				if err == nil {
-					// println("Sent heartbeat to ", peer.ID)
-					time.Sleep(config.HeartbeatTimeout)
-				}
+			if action == true {
+				SendHeartbeat(peerManager.GetSelfID(), peer)
+				// fmt.Println("Sent heartbeat to ", peer.ID)
+				time.Sleep(config.HeartbeatTimeout)
 				peer.SendHeartbeatCh <- true
 			} else {
-				println("Stopping the heartbeat for ", peer.ID)
+				return
 			}
 		}
 	}
@@ -333,20 +332,22 @@ func handleCheckingFailures(stateManager *StateManager, peerManager *PeerManager
 			allMembers := stateManager.GetMembers()
 			for _, peerId := range allMembers {
 				if peerId != self {
-					if stateManager.DecrementPeerStatus(peerId) == 0 {
+					heartBeatValue := stateManager.DecrementPeerStatus(peerId)
+					// println("Heartbeat value for ", peerId, " is ", heartBeatValue)
+					if heartBeatValue == 0 {
 						currentState := stateManager.GetCurrentState()
 						if leader == peerId {
-							println("{peer_id:", self, ", view_id: ", currentState.ViewId, ", leader: ", leader, ", message:\"peer ", peerId, " (leader) unreachable\"}")
+							fmt.Fprintf(os.Stderr, "{peer_id: %v, view_id: %v, leader: %v, message:\"peer %v (leader) unreachable\"}\n", self, currentState.ViewId, leader, peerId)
 							// Check if self is the new leader
 							leaderToBe, exists := nextLeader(leader, allMembers)
-							println("Next leader to be: ", leaderToBe)
+							// fmt.Println("Next leader to be: ", leaderToBe)
 							if exists && leaderToBe == self {
 								// I should be the new leader
-								println("Preparing to be the next leader")
+								// fmt.Println("Preparing to be the next leader")
 								beNextLeader <- true
 							}
 						} else {
-							println("{peer_id:", self, ", view_id: ", currentState.ViewId, ", leader: ", leader, ", message:\"peer ", peerId, " unreachable\"}")
+							fmt.Fprintf(os.Stderr, "{peer_id: %v, view_id: %v, leader: %v, message:\"peer %v unreachable\"}\n", self, currentState.ViewId, leader, peerId)
 						}
 						// Initiate deletion of peer from membership
 						if self == leader {
@@ -357,7 +358,8 @@ func handleCheckingFailures(stateManager *StateManager, peerManager *PeerManager
 									OperationType: DELETE,
 									PeerId:        peerId,
 								})
-								println("{peer_id: ", self, ", view_id: ", stateManager.GetViewId(), ", leader: ", leader, ", memb_list: ", arrayToString(stateManager.GetMembers()), "}")
+								fmt.Fprintf(os.Stderr, "{peer_id: %v, view_id: %v, leader: %v, memb_list: %v}\n",
+									self, stateManager.GetViewId(), leader, arrayToString(stateManager.GetMembers()))
 							} else {
 								// Send DELETE request message to all the other peers
 								requestId := stateManager.GetNextRequestId()
@@ -373,14 +375,14 @@ func handleCheckingFailures(stateManager *StateManager, peerManager *PeerManager
 										err := SendReq(peer.Conn, peerManager.GetSelfID(), newRequestMessage)
 										if err != nil {
 											errors += 1
-											println("Cound not send REQ Message to peer: %v", peerId)
+											fmt.Printf("Could not send REQ Message to peer: %v\n", peerId)
 										}
 									}
 								}
 								if errors == 0 {
 									stateManager.AddRequestEntry(requestId, newRequestMessage)
 								} else {
-									println("Could not send REQ message to all the peers")
+									fmt.Println("Could not send REQ message to all the peers")
 								}
 							}
 						}
@@ -395,8 +397,6 @@ func handleCustomTestCase(readyToExecuteCustomTestCaseCh chan bool, stateManager
 	for {
 		select {
 		case <-readyToExecuteCustomTestCaseCh:
-			println("Executing custom test case")
-
 			leader := peerManager.GetLeader()
 			self := peerManager.GetSelfID()
 			if leader == self {
@@ -418,7 +418,7 @@ func handleCustomTestCase(readyToExecuteCustomTestCaseCh chan bool, stateManager
 								err := SendReq(peer.Conn, self, newRequestMessage)
 								if err != nil {
 									errors += 1
-									println("Cound not send REQ Message to peer: %v", leaderToBe)
+									fmt.Printf("Could not send REQ Message to peer: %v\n", leaderToBe)
 								}
 							}
 						}
@@ -426,13 +426,12 @@ func handleCustomTestCase(readyToExecuteCustomTestCaseCh chan bool, stateManager
 					if errors == 0 {
 						stateManager.AddRequestEntry(requestId, newRequestMessage)
 					} else {
-						println("Could not send REQ message to all the peers")
+						fmt.Println("Could not send REQ message to all the peers")
 					}
 					// Crash the leader
-					println("{peer_id:", peerManager.GetSelfID(), ", view_id: ", stateManager.GetCurrentState().ViewId, ", leader: ", leader, ", message:\"crashing\"}")
+					fmt.Fprintf(os.Stderr, "{peer_id: %v, view_id: %v, leader: %v, message: \"crashing\"}\n",
+						peerManager.GetSelfID(), stateManager.GetCurrentState().ViewId, leader)
 					os.Exit(1)
-				} else {
-					println("Could not find the next leader")
 				}
 			}
 		}
@@ -445,10 +444,10 @@ func handleNEWLEADERMessage(incomingChannel chan *Message, connectionsToBeEstabl
 		case msg := <-incomingChannel:
 			memberShipMessage, err := decodeMembershipMessage(msg.Payload)
 			if err != nil {
-				println("Error decoding Membership Message")
+				fmt.Println("Error decoding Membership Message")
 			}
 			if stateManager.GetCurrentState().ViewId == memberShipMessage.ViewId {
-				println("Received NEWLEADER message with request ID: ", memberShipMessage.RequestId)
+				// fmt.Println("Received NEWLEADER message with request ID: ", memberShipMessage.RequestId)
 				// Switch the operation type to check the status
 				switch memberShipMessage.OperationType {
 				case PENDING:
@@ -469,24 +468,24 @@ func handleNEWLEADERMessage(incomingChannel chan *Message, connectionsToBeEstabl
 									OperationType:    entry.Message.OperationType,
 									PeerId:           entry.Message.PeerId,
 								}
-								err := SendNewLeader(updatedLeader.Conn, peerManager.GetSelfID(), replyMessage)
-								if err != nil {
-									println("Could not send WORK reply to the new leader", err.Error())
-								} else {
-									println("Sent WORK reply to the new leader")
-								}
+								SendNewLeader(updatedLeader.Conn, peerManager.GetSelfID(), replyMessage)
+								// if err != nil {
+								// 	fmt.Println("Could not send WORK reply to the new leader", err.Error())
+								// } else {
+								// 	fmt.Println("Sent WORK reply to the new leader")
+								// }
 							}
 						} else {
-							err := SendNewLeader(updatedLeader.Conn, peerManager.GetSelfID(), &MembershipMessage{
+							SendNewLeader(updatedLeader.Conn, peerManager.GetSelfID(), &MembershipMessage{
 								RequestId:     memberShipMessage.RequestId, // this is reply
 								ViewId:        stateManager.GetCurrentState().ViewId,
 								OperationType: NOTHING,
 							})
-							if err != nil {
-								println("Could not send NOTHING reply to the new leader", err.Error())
-							} else {
-								println("Sent NOTHING reply to the new leader")
-							}
+							// if err != nil {
+							// 	fmt.Println("Could not send NOTHING reply to the new leader", err.Error())
+							// } else {
+							// 	fmt.Println("Sent NOTHING reply to the new leader")
+							// }
 						}
 					}
 					// Add the request to the request entries
@@ -507,7 +506,7 @@ func handleNEWLEADERMessage(incomingChannel chan *Message, connectionsToBeEstabl
 				oldLeader := peerManager.GetLeader()
 				nextToLeader, exists := nextLeader(oldLeader, stateManager.GetMembers())
 				self := peerManager.GetSelfID()
-				println("FOR NEW LEADER MESSAGE OKS RECEIVED: ", received)
+				// fmt.Println("FOR NEW LEADER MESSAGE OKS RECEIVED: ", received)
 				if received == len(stateManager.GetCurrentState().MemberList)-2 && exists && nextToLeader == self { // -1 for self and -1 for the new leader
 					// Increment the view and update the membership by removing the leader
 					stateManager.UpdateView(&MembershipMessage{ // Which would also set the new leader
@@ -527,18 +526,18 @@ func handleNEWLEADERMessage(incomingChannel chan *Message, connectionsToBeEstabl
 							})
 						}
 					}
-					println("{peer_id: ", peerManager.GetSelfID(), ", view_id: ", stateManager.GetViewId(), ", leader: ", peerManager.GetLeader(), ", memb_list: ", arrayToString(stateManager.GetMembers()), "}")
+					fmt.Fprintf(os.Stderr, "{peer_id: %v, view_id: %v, leader: %v, memb_list: %v}\n",
+						peerManager.GetSelfID(), stateManager.GetViewId(), peerManager.GetLeader(), arrayToString(stateManager.GetMembers()))
 					// remove this entry from the request entries
 					stateManager.DeleteRequestEntry(memberShipMessage.RequestId)
 					// Check for the pending request entries
 					if len(stateManager.requestEntries) > 0 {
-						println("Pending requests found, Got to handle them in a better way")
 						// Fetch the pending operations and start new REQ message for them and send to all the peers - DO the old leader's pending job
 						for _, entry := range stateManager.requestEntries {
 							newRequestMessage := &MembershipMessage{
 								OperationType: entry.Message.OperationType,
 								RequestId:     entry.Message.RequestId,
-								ViewId:        stateManager.GetCurrentState().ViewId,
+								ViewId:        stateManager.GetViewId(),
 								PeerId:        entry.Message.PeerId,
 							}
 							errors := 0
@@ -551,22 +550,21 @@ func handleNEWLEADERMessage(incomingChannel chan *Message, connectionsToBeEstabl
 									err := SendReq(peer.Conn, self, newRequestMessage)
 									if err != nil {
 										errors += 1
-										println("Cound not send REQ Message to peer: %v", memberId)
+										fmt.Printf("Could not send REQ Message to peer: %v\n", memberId)
 									}
 								}
 							}
 							if errors != 0 {
-								println("Could not send REQ message to all the peers")
+								fmt.Println("Could not send REQ message to all the peers")
 							}
 						}
 					}
 				}
-				println("Is something blocking this?")
 			} else {
-				println("Peer: ", msg.Header.SenderID, " is lagging behind with viewID: ", memberShipMessage.ViewId, " whereas my viewID is ", stateManager.GetCurrentState().ViewId)
+				fmt.Println("Peer: ", msg.Header.SenderID, " is lagging behind with viewID: ", memberShipMessage.ViewId, " whereas my viewID is ", stateManager.GetCurrentState().ViewId)
 			}
 			informCompletedChannel <- true
-			println("Completed the NEWLEADER message and informed channel")
+			// fmt.Println("Completed the NEWLEADER message and informed channel")
 		}
 	}
 }
@@ -596,7 +594,7 @@ func handleBeingNextLeader(beNextLeader chan bool, connectionsToBeEstablishedCh 
 						err := SendNewLeader(updatedPeer.Conn, self, newMessage)
 						if err != nil {
 							errors += 1
-							println("Could not send NEWLEADER message to ", memberId, err.Error())
+							fmt.Println("Could not send NEWLEADER message to ", memberId, err.Error())
 						}
 					}
 				}
@@ -604,9 +602,25 @@ func handleBeingNextLeader(beNextLeader chan bool, connectionsToBeEstablishedCh 
 			if errors == 0 {
 				stateManager.AddRequestEntry(requestId, newMessage)
 			} else {
-				println("Could not send NEWLEADER message to all the peers")
+				fmt.Println("Could not send NEWLEADER message to all the peers")
 			}
 
+		}
+	}
+}
+
+func handleCustomCrashing(sentJoinAndReadyToCrashCh chan bool, peerManager *PeerManager, stateManager *StateManager) {
+	if config.crashAfterJoinDelay == 0.0 {
+		return
+	} else {
+		for {
+			select {
+			case <-sentJoinAndReadyToCrashCh:
+				time.Sleep(time.Duration(config.crashAfterJoinDelay * float64(time.Second)))
+				fmt.Fprintf(os.Stderr, "{peer_id: %v, view_id: %v, leader: %v, message: \"crashing\"}\n",
+					peerManager.GetSelfID(), stateManager.GetCurrentState().ViewId, peerManager.GetLeader())
+				os.Exit(1)
+			}
 		}
 	}
 }
@@ -623,12 +637,17 @@ func main() {
 	<-readyCh // Block until received ready
 
 	stateManager.addMember(peerManager.GetSelfID()) // Get counted for membership
-	println("{peer_id: ", peerManager.GetSelfID(), ", view_id: ", stateManager.GetViewId(), ", leader: ", peerManager.GetLeader(), ", memb_list: ", arrayToString(stateManager.GetMembers()), "}")
+	fmt.Fprintf(os.Stderr, "{peer_id: %v, view_id: %v, leader: %v, memb_list: %v}\n",
+		peerManager.GetSelfID(), stateManager.GetViewId(), peerManager.GetLeader(), arrayToString(stateManager.GetMembers()))
 
 	// Establish connections as and when needed
 	connectionsToBeEstablishedCh := make(chan *Peer, 100)
 	connectionEstablishedCh := make(chan bool, 1)
 	go establishConnections(peerManager, connectionsToBeEstablishedCh, connectionEstablishedCh)
+
+	// HandleCrash - Custom crashing for testing
+	sentJoinAndReadyToCrashCh := make(chan bool, 1)
+	go handleCustomCrashing(sentJoinAndReadyToCrashCh, peerManager, stateManager)
 
 	// Send heartbeats when triggered
 	for _, peer := range peerManager.GetPeers() {
@@ -678,7 +697,9 @@ func main() {
 				PeerId: peerManager.GetSelfID(),
 			})
 			if err != nil {
-				println("Error sending the JOIN Message", err.Error())
+				fmt.Println("Error sending the JOIN Message", err.Error())
+			} else {
+				sentJoinAndReadyToCrashCh <- true
 			}
 		}
 	}
@@ -710,33 +731,28 @@ func main() {
 		case msg := <-messageReceiverCh:
 			switch msg.Header.MessageType {
 			case JOIN:
-				println("Received JOIN message from ", msg.Header.SenderID)
+				// fmt.Println("Received JOIN message from ", msg.Header.SenderID)
 				// Establish connection with peer
 				if peer, ok := peerManager.GetPeer(int(msg.Header.SenderID)); ok {
 					connectionsToBeEstablishedCh <- peer
 				}
-				established := <-connectionEstablishedCh
-				if established {
-					println("Connection established with PEER that sent JOIN request")
-				}
+				<-connectionEstablishedCh
 				JOINMessagesCh <- msg
 				<-JOINMessagesActionCompleteCh
 			case REQ:
-				println("Received REQ message from ", msg.Header.SenderID)
+				// fmt.Println("Received REQ message from ", msg.Header.SenderID)
 				REQMessagesCh <- msg
 				<-REQMessagesActionCompleteCh
 			case OK:
-				decoded, _ := decodeMembershipMessage(msg.Payload)
-				println("Received OK message from ", msg.Header.SenderID, " with request ID ", decoded.RequestId)
+				// fmt.Println("Received OK message from ", msg.Header.SenderID, " with request ID ", decoded.RequestId)
 				OKMessagesCh <- msg
 				<-OKMessagesActionCompleteCh
 			case NEWVIEW:
-				decoded, _ := decodeMembershipMessage(msg.Payload)
-				println("Received NEWVIEW message from ", msg.Header.SenderID, " with view ", decoded.ViewId)
+				// fmt.Println("Received NEWVIEW message from ", msg.Header.SenderID, " with view ", decoded.ViewId)
 				NEWVIEWMessageCh <- msg
 				<-NEWVIEWMessageActionCompleteCh
 			case NEWLEADER:
-				println("New Leader message received from ", msg.Header.SenderID)
+				// fmt.Println("New Leader message received from ", msg.Header.SenderID)
 				NEWLEADERMessageCh <- msg
 				<-NEWLEADERMessageActionCompleteCh
 			default:

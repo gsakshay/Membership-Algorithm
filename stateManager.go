@@ -171,7 +171,7 @@ func (sm *StateManager) AddRequestEntry(requestId int, message *MembershipMessag
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	sm.requestEntries[requestId] = &RequestEntry{Message: message}
-	println("Added request entry with request ID: ", requestId, "Current total request entries: ", len(sm.requestEntries))
+	// println("Added request entry with request ID: ", requestId, "Current total request entries: ", len(sm.requestEntries))
 }
 
 func (sm *StateManager) GetRequestEntry(requestId int) (*RequestEntry, bool) {
@@ -185,12 +185,14 @@ func (sm *StateManager) DeleteRequestEntry(requestId int) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	delete(sm.requestEntries, requestId)
-	println("Deleted request entry with request ID: ", requestId, "Current total request entries: ", len(sm.requestEntries))
+	// println("Deleted request entry with request ID: ", requestId, "Current total request entries: ", len(sm.requestEntries))
 }
 
 func (sm *StateManager) UpdateView(message *MembershipMessage) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
+
+	sm.currentState.ViewId = message.ViewId
 
 	if message == nil {
 		return fmt.Errorf("MembershipMessage is nil")
@@ -202,7 +204,6 @@ func (sm *StateManager) UpdateView(message *MembershipMessage) error {
 		if len(message.MembershipList) == 0 && message.PeerId == 0 {
 			return fmt.Errorf("No members in the Membership List or PeerID")
 		}
-		sm.currentState.ViewId = message.ViewId
 		if len(message.MembershipList) > 0 {
 			sm.currentState.MemberList = message.MembershipList
 			for _, id := range sm.currentState.MemberList {
@@ -234,7 +235,6 @@ func (sm *StateManager) UpdateView(message *MembershipMessage) error {
 	case DELETE:
 		if message.PeerId != 0 {
 			sm.removeMember(message.PeerId)
-			sm.currentState.ViewId = message.ViewId
 			// Stop sending heartbeats
 			if peer, ok := sm.peerManager.GetPeer(message.PeerId); ok {
 				peer.SendHeartbeatCh <- false
@@ -242,10 +242,10 @@ func (sm *StateManager) UpdateView(message *MembershipMessage) error {
 			// Check if it was the leader and update the new leader
 			leader := sm.peerManager.GetLeader()
 			if message.PeerId == leader {
-				fmt.Println("Leader is leaving, updating new leader")
+				// fmt.Println("Leader is leaving, updating new leader")
 				if nextLeaderTobe, exists := nextLeader(leader, sm.currentState.MemberList); exists {
 					sm.peerManager.SetLeader(nextLeaderTobe)
-					fmt.Println("New leader is: ", nextLeaderTobe)
+					// fmt.Println("New leader is: ", nextLeaderTobe)
 				} else {
 					fmt.Println("No new leader found")
 				}
