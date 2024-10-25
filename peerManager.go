@@ -86,11 +86,11 @@ func (pm *PeerManager) GetPeerCount() int {
 	return pm.peerCount
 }
 
-func (pm *PeerManager) GetPeer(id int) (Peer, bool) {
+func (pm *PeerManager) GetPeer(id int) (*Peer, bool) {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
 	peer, ok := pm.peers[id]
-	return peer, ok
+	return &peer, ok
 }
 
 func (pm *PeerManager) SetSelf(selfID int) {
@@ -118,10 +118,6 @@ func (pm *PeerManager) GetSelfHash() int {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
 	return pm.selfHashed
-}
-
-func (pm *PeerManager) GetSelf() (Peer, bool) {
-	return pm.GetPeer(pm.GetSelfID())
 }
 
 func (pm *PeerManager) SetLeader(leaderId int) {

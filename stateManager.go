@@ -21,11 +21,12 @@ type State struct {
 }
 
 type MembershipMessage struct {
-	OperationType  OperationType
-	PeerId         int
-	ViewId         int
-	RequestId      int
-	MembershipList []int
+	OperationType    OperationType
+	PeerId           int
+	ViewId           int
+	RequestId        int
+	PendingRequestId int
+	MembershipList   []int
 }
 
 type RequestEntry struct {
@@ -238,13 +239,20 @@ func (sm *StateManager) UpdateView(message *MembershipMessage) error {
 			if peer, ok := sm.peerManager.GetPeer(message.PeerId); ok {
 				peer.SendHeartbeatCh <- false
 			}
+			// Check if it was the leader and update the new leader
+			leader := sm.peerManager.GetLeader()
+			if message.PeerId == leader {
+				fmt.Println("Leader is leaving, updating new leader")
+				if nextLeaderTobe, exists := nextLeader(leader, sm.currentState.MemberList); exists {
+					sm.peerManager.SetLeader(nextLeaderTobe)
+					fmt.Println("New leader is: ", nextLeaderTobe)
+				} else {
+					fmt.Println("No new leader found")
+				}
+			}
 		} else {
 			return fmt.Errorf("no peer ID provided for DELETE operation")
 		}
-	case PENDING:
-		fmt.Printf("Received PENDING operation for peer ID: %d\n", message.PeerId)
-	case NOTHING:
-		fmt.Println("Received NOTHING operation")
 	default:
 		return fmt.Errorf("unknown operation type: %s", message.OperationType)
 	}

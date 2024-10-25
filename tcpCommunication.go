@@ -16,11 +16,12 @@ const (
 	NEWVIEW   = 4
 	NEWLEADER = 5
 	// Flags for encoding and decoding Messages - iota is a built-in identifier in Go that is used to create constant sequences
-	FLAG_OPERATION_TYPE  = 1 << iota // 1 << 0 = 00000001 = 1
-	FLAG_PEER_ID                     // 1 << 1 = 00000010 = 2
-	FLAG_VIEW_ID                     // 1 << 2 = 00000100 = 4
-	FLAG_REQUEST_ID                  // 1 << 3 = 00001000 = 8
-	FLAG_MEMBERSHIP_LIST             // 1 << 4 = 0010000 = 16
+	FLAG_OPERATION_TYPE     = 1 << iota // 1 << 0 = 00000001 = 1
+	FLAG_PEER_ID                        // 1 << 1 = 00000010 = 2
+	FLAG_VIEW_ID                        // 1 << 2 = 00000100 = 4
+	FLAG_REQUEST_ID                     // 1 << 3 = 00001000 = 8
+	FLAG_PENDING_REQUEST_ID             // 1 << 4 = 00010000 = 16
+	FLAG_MEMBERSHIP_LIST                // 1 << 5 = 00100000 = 32
 )
 
 type MessageHeader struct {
@@ -120,6 +121,9 @@ func encodeMembershipMessage(membMsg *MembershipMessage) ([]byte, error) {
 	if membMsg.RequestId != 0 {
 		flags |= FLAG_REQUEST_ID
 	}
+	if membMsg.PendingRequestId != 0 {
+		flags |= FLAG_PENDING_REQUEST_ID
+	}
 	if len(membMsg.MembershipList) > 0 {
 		flags |= FLAG_MEMBERSHIP_LIST
 	}
@@ -153,6 +157,12 @@ func encodeMembershipMessage(membMsg *MembershipMessage) ([]byte, error) {
 	if flags&FLAG_REQUEST_ID != 0 {
 		tempBuf = make([]byte, 4)
 		binary.BigEndian.PutUint32(tempBuf, uint32(membMsg.RequestId))
+		buf = append(buf, tempBuf...)
+	}
+
+	if flags&FLAG_PENDING_REQUEST_ID != 0 {
+		tempBuf = make([]byte, 4)
+		binary.BigEndian.PutUint32(tempBuf, uint32(membMsg.PendingRequestId))
 		buf = append(buf, tempBuf...)
 	}
 
@@ -223,6 +233,14 @@ func decodeMembershipMessage(payload []byte) (*MembershipMessage, error) {
 			return nil, errors.New("payload too short for request ID")
 		}
 		membMsg.RequestId = int(binary.BigEndian.Uint32(payload[offset:]))
+		offset += 4
+	}
+
+	if flags&FLAG_PENDING_REQUEST_ID != 0 {
+		if offset+4 > len(payload) {
+			return nil, errors.New("payload too short for pending request ID")
+		}
+		membMsg.PendingRequestId = int(binary.BigEndian.Uint32(payload[offset:]))
 		offset += 4
 	}
 
